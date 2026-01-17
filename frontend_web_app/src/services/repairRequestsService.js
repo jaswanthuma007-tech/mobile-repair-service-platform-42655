@@ -18,6 +18,7 @@ const seed = [
     contactPhone: '(555) 010-1010',
     consent: true,
     status: 'New',
+    notes: 'Customer prefers doorstep pickup at office reception.',
     createdAt: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString()
   },
   {
@@ -31,6 +32,7 @@ const seed = [
     contactPhone: '(555) 010-2020',
     consent: true,
     status: 'In Progress',
+    notes: 'Quoted battery replacement. Awaiting parts arrival.',
     createdAt: new Date(Date.now() - 1000 * 60 * 60 * 20).toISOString()
   },
   {
@@ -44,6 +46,7 @@ const seed = [
     contactPhone: '(555) 010-3030',
     consent: true,
     status: 'Completed',
+    notes: 'Completed keyboard cleaning + driver updates. Customer confirmed resolved.',
     createdAt: new Date(Date.now() - 1000 * 60 * 60 * 42).toISOString()
   }
 ];
@@ -88,6 +91,7 @@ function mapRowToUi(row) {
     contactPhone: row.contact_phone ?? row.contactPhone ?? '',
     consent: Boolean(row.consent ?? row.customer_consent ?? row.consent_to_contact ?? row.consentToContact ?? false),
     status: row.status ?? 'New',
+    notes: row.notes ?? row.admin_notes ?? row.internal_notes ?? row.note ?? '',
     createdAt: row.created_at ?? row.createdAt ?? new Date().toISOString()
   };
 }
@@ -108,6 +112,7 @@ async function memoryCreate(payload) {
     id: generateId(),
     status: 'New',
     createdAt: new Date().toISOString(),
+    notes: payload.notes ?? '',
     ...payload
   };
   memoryStore = [item, ...memoryStore];
@@ -204,7 +209,8 @@ export async function createRepairRequest(payload) {
       contact_email: payload.contactEmail,
       contact_phone: payload.contactPhone,
       consent: Boolean(payload.consent),
-      status: payload.status ?? 'New'
+      status: payload.status ?? 'New',
+      notes: payload.notes ?? ''
     };
 
     const { data, error } = await supabase.from('repair_requests').insert(row).select('*').single();
@@ -234,6 +240,7 @@ export async function updateRepairRequest(id, updates) {
     if (updates.contactPhone !== undefined) patch.contact_phone = updates.contactPhone;
     if (updates.consent !== undefined) patch.consent = Boolean(updates.consent);
     if (updates.status !== undefined) patch.status = updates.status;
+    if (updates.notes !== undefined) patch.notes = String(updates.notes ?? '');
 
     const { data, error } = await supabase.from('repair_requests').update(patch).eq('id', id).select('*').single();
     if (error) return { data: null, error };

@@ -85,12 +85,17 @@ export default function AdminDashboardPage() {
   }, [page]);
 
   async function quickStatusChange(item, nextStatus) {
+    // Optimistic UI: update immediately, then rollback on error.
+    const prevItems = items;
+    setItems((p) => p.map((r) => (r.id === item.id ? { ...r, status: nextStatus } : r)));
+
     try {
       const { data, error } = await updateRepairRequest(item.id, { status: nextStatus });
       if (error) throw error;
-      setItems((prev) => prev.map((p) => (p.id === item.id ? data : p)));
+      setItems((p) => p.map((r) => (r.id === item.id ? data : r)));
       toast.success('Status updated', `${item.id} → ${nextStatus}`);
     } catch (err) {
+      setItems(prevItems);
       toast.error('Update failed', err?.message || 'Unable to update status.');
     }
   }
@@ -103,6 +108,11 @@ export default function AdminDashboardPage() {
   async function saveEdit() {
     if (!editItem) return;
     setEditSaving(true);
+
+    // Optimistic UI: update row locally; rollback on error.
+    const prevItems = items;
+    setItems((p) => p.map((r) => (r.id === editItem.id ? { ...r, ...editItem } : r)));
+
     try {
       const { data, error } = await updateRepairRequest(editItem.id, {
         deviceType: editItem.deviceType,
@@ -113,7 +123,8 @@ export default function AdminDashboardPage() {
         contactEmail: editItem.contactEmail,
         contactPhone: editItem.contactPhone,
         consent: editItem.consent,
-        status: editItem.status
+        status: editItem.status,
+        notes: editItem.notes
       });
       if (error) throw error;
 
@@ -122,6 +133,7 @@ export default function AdminDashboardPage() {
       setEditOpen(false);
       setEditItem(null);
     } catch (err) {
+      setItems(prevItems);
       toast.error('Save failed', err?.message || 'Unable to save changes.');
     } finally {
       setEditSaving(false);
@@ -130,18 +142,28 @@ export default function AdminDashboardPage() {
 
   async function removeItem(item) {
     if (!window.confirm(`Delete ${item.id}? This cannot be undone.`)) return;
+
+    // Optimistic UI: remove immediately, rollback on error.
+    const prevItems = items;
+    const prevTotal = totalCount;
+
+    setItems((p) => p.filter((r) => r.id !== item.id));
+    setTotalCount((c) => Math.max(0, c - 1));
+
     try {
       const { error } = await deleteRepairRequest(item.id);
       if (error) throw error;
 
-      // If we delete the last item on a page, try to go back one page.
-      const nextCount = Math.max(0, totalCount - 1);
+      // If we deleted the last item on a page, try to go back one page.
+      const nextCount = Math.max(0, prevTotal - 1);
       const nextPages = Math.max(1, Math.ceil(nextCount / pageSize));
       const nextPage = Math.min(page, nextPages);
 
       toast.success('Deleted', `${item.id} removed.`);
       await refresh({ nextPage });
     } catch (err) {
+      setItems(prevItems);
+      setTotalCount(prevTotal);
       toast.error('Delete failed', err?.message || 'Unable to delete request.');
     }
   }
@@ -253,6 +275,7 @@ export default function AdminDashboardPage() {
                 <th>Preferred</th>
                 <th>Contact</th>
                 <th>Status</th>
+                <th>Notes</th>
                 <th style={{ width: 280 }}>Actions</th>
               </tr>
             </thead>
@@ -275,6 +298,9 @@ export default function AdminDashboardPage() {
                   </td>
                   <td>
                     <Badge tone={badgeTone(r.status)}>{r.status}</Badge>
+                  </td>
+                  <td style={{ maxWidth: 320 }}>
+                    <div className="help">{r.notes ? r.notes : '—'}</div>
                   </td>
                   <td>
                     <div className="row">
@@ -302,7 +328,7 @@ export default function AdminDashboardPage() {
 
               {!loading && items.length === 0 ? (
                 <tr>
-                  <td colSpan={7}>
+                  <td colSpan={8}>
                     <div className="section">
                       <p className="p">No requests found for this filter/search.</p>
                     </div>
@@ -376,6 +402,14 @@ export default function AdminDashboardPage() {
               name="issueDescription"
               value={editItem.issueDescription}
               onChange={(e) => setEditItem((p) => ({ ...p, issueDescription: e.target.value }))}
+            />
+
+            <Textarea
+              label="Admin notes"
+              name="notes"
+              value={editItem.notes || ''}
+              onChange={(e) => setEditItem((p) => ({ ...p, notes: e.target.value }))}
+              placeholder="Internal notes (customer preference, quote, parts ordered, etc.)"
             />
 
             <div className="grid-2">
