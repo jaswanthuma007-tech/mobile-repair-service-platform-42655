@@ -4,7 +4,7 @@ import { createRepairRequest } from '../services/repairRequestsService';
 import { useToast } from '../components/ToastProvider';
 
 const DEVICE_TYPES = ['iPhone', 'Android Phone', 'Tablet', 'Laptop', 'Other'];
-const STEPS = ['Device', 'Issue', 'Schedule', 'Contact', 'Confirm'];
+const STEPS = ['Device', 'Issue', 'Schedule', 'Contact', 'Confirm', 'Success'];
 
 function isEmail(v) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v || '').trim());
@@ -31,12 +31,13 @@ export default function BookingPage() {
     preferredTime: '',
     contactName: '',
     contactEmail: '',
-    contactPhone: ''
+    contactPhone: '',
+    consent: false
   });
 
   const [errors, setErrors] = useState({});
 
-  const stepValid = useMemo(() => {
+  const stepErrors = useMemo(() => {
     const e = {};
     if (step === 0) {
       if (!form.deviceType) e.deviceType = 'Please select a device type.';
@@ -54,6 +55,9 @@ export default function BookingPage() {
       if (!isEmail(form.contactEmail)) e.contactEmail = 'Please enter a valid email.';
       if (!isPhone(form.contactPhone)) e.contactPhone = 'Please enter a valid phone number.';
     }
+    if (step === 4) {
+      if (!form.consent) e.consent = 'Consent is required to submit your request.';
+    }
     return e;
   }, [form, step]);
 
@@ -63,7 +67,7 @@ export default function BookingPage() {
   }
 
   function goNext() {
-    const e = stepValid;
+    const e = stepErrors;
     if (Object.keys(e).length) {
       setErrors(e);
       toast.error('Fix required fields', 'Please review the highlighted inputs before continuing.');
@@ -77,7 +81,7 @@ export default function BookingPage() {
   }
 
   async function submit() {
-    const e = stepValid;
+    const e = stepErrors;
     if (Object.keys(e).length) {
       setErrors(e);
       toast.error('Fix required fields', 'Please review the highlighted inputs before submitting.');
@@ -90,7 +94,7 @@ export default function BookingPage() {
       if (error) throw error;
       setCreated(data);
       toast.success('Booking confirmed', `Your request ${data.id} was created.`);
-      setStep(4);
+      setStep(5);
     } catch (err) {
       toast.error('Booking failed', err?.message || 'Unable to create request.');
     } finally {
@@ -251,7 +255,7 @@ export default function BookingPage() {
           <div className="fade-in-up">
             <h2 className="h2">Confirm</h2>
             <p className="p" style={{ marginBottom: 12 }}>
-              Please review your details before submitting.
+              Please review your details and confirm consent to submit your request.
             </p>
 
             <Card className="card card-pad" style={{ background: 'rgba(255,255,255,0.75)' }}>
@@ -285,6 +289,30 @@ export default function BookingPage() {
                 <div className="help">Phone</div>
                 <div style={{ fontWeight: 900 }}>{form.contactPhone || '—'}</div>
               </div>
+
+              <div className="section">
+                <label className="row" style={{ alignItems: 'flex-start', gap: 10 }}>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(form.consent)}
+                    onChange={(e) => setField('consent', e.target.checked)}
+                    aria-invalid={Boolean(errors.consent)}
+                    aria-describedby={errors.consent ? 'consent-error' : undefined}
+                    style={{ marginTop: 3 }}
+                  />
+                  <span>
+                    <span style={{ fontWeight: 900 }}>I consent</span>
+                    <span className="help" style={{ display: 'block' }}>
+                      to be contacted regarding this repair request (phone/email).
+                    </span>
+                  </span>
+                </label>
+                {errors.consent ? (
+                  <div id="consent-error" className="error" role="alert">
+                    {errors.consent}
+                  </div>
+                ) : null}
+              </div>
             </Card>
 
             <div className="section row">
@@ -295,12 +323,41 @@ export default function BookingPage() {
                 {submitting ? 'Submitting…' : 'Submit Request'}
               </Button>
             </div>
+          </div>
+        ) : null}
 
-            {created ? (
-              <div className="section">
-                <Badge tone="green">Created: {created.id}</Badge>
-              </div>
-            ) : null}
+        {step === 5 ? (
+          <div className="fade-in-up">
+            <h2 className="h2">Success</h2>
+            <p className="p">We’ve received your request. Our team will reach out shortly to confirm details.</p>
+
+            <div className="section row">
+              {created ? <Badge tone="green">Request ID: {created.id}</Badge> : null}
+              <Badge tone="blue">Status: New</Badge>
+            </div>
+
+            <div className="section row">
+              <Button
+                variant="primary"
+                onClick={() => {
+                  setStep(0);
+                  setCreated(null);
+                  setErrors({});
+                  setForm({
+                    deviceType: '',
+                    issueDescription: '',
+                    preferredDate: '',
+                    preferredTime: '',
+                    contactName: '',
+                    contactEmail: '',
+                    contactPhone: '',
+                    consent: false
+                  });
+                }}
+              >
+                Book another repair
+              </Button>
+            </div>
           </div>
         ) : null}
       </Card>

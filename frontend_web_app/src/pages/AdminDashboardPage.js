@@ -1,11 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Card, Input, Modal, Select, Textarea } from '../components/ui';
 import { useToast } from '../components/ToastProvider';
-import {
-  deleteRepairRequest,
-  listRepairRequests,
-  updateRepairRequest
-} from '../services/repairRequestsService';
+import { deleteRepairRequest, listRepairRequests, updateRepairRequest } from '../services/repairRequestsService';
 import { isSupabaseConfigured } from '../lib/supabaseClient';
 
 const STATUSES = ['All', 'New', 'In Progress', 'Completed'];
@@ -26,13 +22,22 @@ export default function AdminDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('All');
+
   const [items, setItems] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
+
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const [editOpen, setEditOpen] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
 
+  const totalPages = Math.max(1, Math.ceil((totalCount || 0) / pageSize));
+
   const filteredMeta = useMemo(() => {
+    // This meta is based on the currently loaded page results (fast + simple).
+    // If you want global counts per status, add a separate aggregate query in Supabase.
     const counts = { New: 0, 'In Progress': 0, Completed: 0 };
     items.forEach((i) => {
       if (counts[i.status] !== undefined) counts[i.status] += 1;
@@ -40,12 +45,20 @@ export default function AdminDashboardPage() {
     return counts;
   }, [items]);
 
-  async function refresh() {
+  async function refresh({ nextPage = page, nextPageSize = pageSize } = {}) {
     setLoading(true);
     try {
-      const { data, error } = await listRepairRequests({ query, status });
+      const { data, count, error } = await listRepairRequests({
+        query,
+        status,
+        page: nextPage,
+        pageSize: nextPageSize
+      });
       if (error) throw error;
       setItems(data || []);
+      setTotalCount(count || 0);
+      setPage(nextPage);
+      setPageSize(nextPageSize);
     } catch (err) {
       toast.error('Load failed', err?.message || 'Unable to fetch repair requests.');
     } finally {
@@ -54,15 +67,22 @@ export default function AdminDashboardPage() {
   }
 
   useEffect(() => {
-    refresh();
+    refresh({ nextPage: 1 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    const id = window.setTimeout(() => refresh(), 220);
+    // On filter changes, reset to page 1 and debounce.
+    const id = window.setTimeout(() => refresh({ nextPage: 1 }), 220);
     return () => window.clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, status]);
+  }, [query, status, pageSize]);
+
+  useEffect(() => {
+    // When changing page, fetch immediately.
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
 
   async function quickStatusChange(item, nextStatus) {
     try {
@@ -92,9 +112,11 @@ export default function AdminDashboardPage() {
         contactName: editItem.contactName,
         contactEmail: editItem.contactEmail,
         contactPhone: editItem.contactPhone,
+        consent: editItem.consent,
         status: editItem.status
       });
       if (error) throw error;
+
       setItems((prev) => prev.map((p) => (p.id === data.id ? data : p)));
       toast.success('Saved', `${data.id} updated.`);
       setEditOpen(false);
@@ -111,8 +133,14 @@ export default function AdminDashboardPage() {
     try {
       const { error } = await deleteRepairRequest(item.id);
       if (error) throw error;
-      setItems((prev) => prev.filter((p) => p.id !== item.id));
+
+      // If we delete the last item on a page, try to go back one page.
+      const nextCount = Math.max(0, totalCount - 1);
+      const nextPages = Math.max(1, Math.ceil(nextCount / pageSize));
+      const nextPage = Math.min(page, nextPages);
+
       toast.success('Deleted', `${item.id} removed.`);
+      await refresh({ nextPage });
     } catch (err) {
       toast.error('Delete failed', err?.message || 'Unable to delete request.');
     }
@@ -145,7 +173,15 @@ export default function AdminDashboardPage() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search by ID, device, issue, name, email, phone…"
           />
-          <Select label="Status" name="status" value={status} onChange={(e) => setStatus(e.target.value)}>
+          <Select
+            label="Status"
+            name="status"
+            value={status}
+            onChange={(e) => {
+              setStatus(e.target.value);
+              setPage(1);
+            }}
+          >
             {STATUSES.map((s) => (
               <option key={s} value={s}>
                 {s}
@@ -155,9 +191,47 @@ export default function AdminDashboardPage() {
         </div>
 
         <div className="section row">
-          <Button variant="ghost" onClick={refresh} disabled={loading}>
+          <Select
+            label="Page size"
+            name="pageSize"
+            value={String(pageSize)}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+            help="Controls how many rows are shown per page."
+          >
+            {[5, 10, 20, 50].map((n) => (
+              <option key={n} value={String(n)}>
+                {n} / page
+              </option>
+            ))}
+          </Select>
+
+          <Button variant="ghost" onClick={() => refresh({ nextPage: 1 })} disabled={loading}>
             {loading ? 'Refreshing…' : 'Refresh'}
           </Button>
+        </div>
+
+        <div className="section spread">
+          <div className="row">
+            <Badge tone="gray">
+              {totalCount} total · Page {page} / {totalPages}
+            </Badge>
+          </div>
+          <div className="row">
+            <Button
+              variant="ghost"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={loading || page <= 1}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={loading || page >= totalPages}
+            >
+              Next
+            </Button>
+          </div>
         </div>
       </Card>
 
@@ -166,7 +240,7 @@ export default function AdminDashboardPage() {
           <h2 className="h2" style={{ margin: 0 }}>
             Repair Requests
           </h2>
-          <Badge tone="gray">{items.length} results</Badge>
+          <Badge tone="gray">{items.length} on this page</Badge>
         </div>
 
         <div style={{ overflowX: 'auto' }}>
@@ -237,6 +311,30 @@ export default function AdminDashboardPage() {
               ) : null}
             </tbody>
           </table>
+        </div>
+
+        <div className="section spread">
+          <div className="row">
+            <Badge tone="gray">
+              {totalCount} total · Page {page} / {totalPages}
+            </Badge>
+          </div>
+          <div className="row">
+            <Button
+              variant="ghost"
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              disabled={loading || page <= 1}
+            >
+              Previous
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              disabled={loading || page >= totalPages}
+            >
+              Next
+            </Button>
+          </div>
         </div>
       </Card>
 
@@ -318,6 +416,23 @@ export default function AdminDashboardPage() {
               value={editItem.contactPhone}
               onChange={(e) => setEditItem((p) => ({ ...p, contactPhone: e.target.value }))}
             />
+
+            <div className="section">
+              <label className="row" style={{ alignItems: 'flex-start', gap: 10 }}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(editItem.consent)}
+                  onChange={(e) => setEditItem((p) => ({ ...p, consent: e.target.checked }))}
+                  style={{ marginTop: 3 }}
+                />
+                <span>
+                  <span style={{ fontWeight: 900 }}>Consent</span>
+                  <span className="help" style={{ display: 'block' }}>
+                    Customer consent to be contacted about the repair request.
+                  </span>
+                </span>
+              </label>
+            </div>
 
             <div className="section row">
               <Button variant="primary" onClick={saveEdit} disabled={editSaving}>

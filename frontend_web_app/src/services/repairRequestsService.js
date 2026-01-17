@@ -16,6 +16,7 @@ const seed = [
     contactName: 'Jordan Lee',
     contactEmail: 'jordan@example.com',
     contactPhone: '(555) 010-1010',
+    consent: true,
     status: 'New',
     createdAt: new Date(Date.now() - 1000 * 60 * 60 * 3).toISOString()
   },
@@ -28,6 +29,7 @@ const seed = [
     contactName: 'Avery Chen',
     contactEmail: 'avery@example.com',
     contactPhone: '(555) 010-2020',
+    consent: true,
     status: 'In Progress',
     createdAt: new Date(Date.now() - 1000 * 60 * 60 * 20).toISOString()
   },
@@ -40,6 +42,7 @@ const seed = [
     contactName: 'Sam Patel',
     contactEmail: 'sam@example.com',
     contactPhone: '(555) 010-3030',
+    consent: true,
     status: 'Completed',
     createdAt: new Date(Date.now() - 1000 * 60 * 60 * 42).toISOString()
   }
@@ -73,12 +76,31 @@ function matchesStatus(item, status) {
   return item.status === status;
 }
 
-async function memoryList({ query, status }) {
+function mapRowToUi(row) {
+  return {
+    id: row.id,
+    deviceType: row.device_type ?? row.deviceType ?? '',
+    issueDescription: row.issue_description ?? row.issueDescription ?? '',
+    preferredDate: row.preferred_date ?? row.preferredDate ?? '',
+    preferredTime: row.preferred_time ?? row.preferredTime ?? '',
+    contactName: row.contact_name ?? row.contactName ?? '',
+    contactEmail: row.contact_email ?? row.contactEmail ?? '',
+    contactPhone: row.contact_phone ?? row.contactPhone ?? '',
+    consent: Boolean(row.consent ?? row.customer_consent ?? row.consent_to_contact ?? row.consentToContact ?? false),
+    status: row.status ?? 'New',
+    createdAt: row.created_at ?? row.createdAt ?? new Date().toISOString()
+  };
+}
+
+async function memoryList({ query, status, page, pageSize }) {
   const filtered = memoryStore
     .filter((r) => matchesStatus(r, status))
     .filter((r) => matchesQuery(r, query))
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-  return { data: filtered, error: null };
+
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize;
+  return { data: filtered.slice(from, to), count: filtered.length, error: null };
 }
 
 async function memoryCreate(payload) {
@@ -113,43 +135,55 @@ async function memoryRemove(id) {
 /**
  * PUBLIC_INTERFACE
  * Lists repair requests with optional search query and status filter.
- * When Supabase is configured, this should be switched to a DB query.
+ * Supports pagination via (page, pageSize).
+ *
+ * Return shape:
+ * - data: array of requests (UI shape)
+ * - count: total number of results for current filter (useful for pagination UI)
  */
-export async function listRepairRequests({ query = '', status = 'All' } = {}) {
-  if (!isSupabaseConfigured()) return memoryList({ query, status });
+export async function listRepairRequests({ query = '', status = 'All', page = 1, pageSize = 10 } = {}) {
+  if (!isSupabaseConfigured()) return memoryList({ query, status, page, pageSize });
 
-  // Supabase integration placeholder:
   // Expected table: repair_requests (id, device_type, issue_description, preferred_date, preferred_time, contact_*, status, created_at)
-  // NOTE: This is intentionally conservative and can be adjusted when DB schema is finalized.
+  // This query assumes RLS is configured appropriately for admin users.
   try {
-    const { data, error } = await supabase
+    let q = supabase
       .from('repair_requests')
-      .select('*')
+      .select('*', { count: 'exact' })
       .order('created_at', { ascending: false });
 
-    if (error) return { data: null, error };
+    if (status && status !== 'All') {
+      q = q.eq('status', status);
+    }
 
-    // Map Supabase row names to UI shape if needed:
-    const mapped = (data || []).map((row) => ({
-      id: row.id,
-      deviceType: row.device_type ?? row.deviceType ?? '',
-      issueDescription: row.issue_description ?? row.issueDescription ?? '',
-      preferredDate: row.preferred_date ?? row.preferredDate ?? '',
-      preferredTime: row.preferred_time ?? row.preferredTime ?? '',
-      contactName: row.contact_name ?? row.contactName ?? '',
-      contactEmail: row.contact_email ?? row.contactEmail ?? '',
-      contactPhone: row.contact_phone ?? row.contactPhone ?? '',
-      status: row.status ?? 'New',
-      createdAt: row.created_at ?? row.createdAt ?? new Date().toISOString()
-    }));
+    // Conservative search implementation:
+    // - Use "or" with ilike across common fields.
+    // - If your schema differs, adjust these column names accordingly.
+    const qq = normalizeQuery(query);
+    if (qq) {
+      const pattern = `%${qq}%`;
+      q = q.or(
+        [
+          `id.ilike.${pattern}`,
+          `device_type.ilike.${pattern}`,
+          `issue_description.ilike.${pattern}`,
+          `contact_name.ilike.${pattern}`,
+          `contact_email.ilike.${pattern}`,
+          `contact_phone.ilike.${pattern}`
+        ].join(',')
+      );
+    }
 
-    const filtered = mapped
-      .filter((r) => matchesStatus(r, status))
-      .filter((r) => matchesQuery(r, query));
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
 
-    return { data: filtered, error: null };
+    const { data, error, count } = await q.range(from, to);
+
+    if (error) return { data: null, count: null, error };
+
+    return { data: (data || []).map(mapRowToUi), count: count ?? 0, error: null };
   } catch (e) {
-    return { data: null, error: e };
+    return { data: null, count: null, error: e };
   }
 }
 
@@ -169,27 +203,14 @@ export async function createRepairRequest(payload) {
       contact_name: payload.contactName,
       contact_email: payload.contactEmail,
       contact_phone: payload.contactPhone,
+      consent: Boolean(payload.consent),
       status: payload.status ?? 'New'
     };
 
     const { data, error } = await supabase.from('repair_requests').insert(row).select('*').single();
     if (error) return { data: null, error };
 
-    return {
-      data: {
-        id: data.id,
-        deviceType: data.device_type,
-        issueDescription: data.issue_description,
-        preferredDate: data.preferred_date,
-        preferredTime: data.preferred_time,
-        contactName: data.contact_name,
-        contactEmail: data.contact_email,
-        contactPhone: data.contact_phone,
-        status: data.status,
-        createdAt: data.created_at
-      },
-      error: null
-    };
+    return { data: mapRowToUi(data), error: null };
   } catch (e) {
     return { data: null, error: e };
   }
@@ -211,26 +232,13 @@ export async function updateRepairRequest(id, updates) {
     if (updates.contactName !== undefined) patch.contact_name = updates.contactName;
     if (updates.contactEmail !== undefined) patch.contact_email = updates.contactEmail;
     if (updates.contactPhone !== undefined) patch.contact_phone = updates.contactPhone;
+    if (updates.consent !== undefined) patch.consent = Boolean(updates.consent);
     if (updates.status !== undefined) patch.status = updates.status;
 
     const { data, error } = await supabase.from('repair_requests').update(patch).eq('id', id).select('*').single();
     if (error) return { data: null, error };
 
-    return {
-      data: {
-        id: data.id,
-        deviceType: data.device_type,
-        issueDescription: data.issue_description,
-        preferredDate: data.preferred_date,
-        preferredTime: data.preferred_time,
-        contactName: data.contact_name,
-        contactEmail: data.contact_email,
-        contactPhone: data.contact_phone,
-        status: data.status,
-        createdAt: data.created_at
-      },
-      error: null
-    };
+    return { data: mapRowToUi(data), error: null };
   } catch (e) {
     return { data: null, error: e };
   }
