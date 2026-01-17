@@ -1,0 +1,4 @@
+{
+    "command": "npm run test",
+    "working_directory": "/home/kavia/workspace/code-generation/mobile-repair-service-platform-42655/frontend_web_app"
+}
